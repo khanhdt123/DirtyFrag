@@ -9,6 +9,8 @@ import android.content.pm.PackageManager;
 import android.os.PowerManager;
 import android.util.Log;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
  * Auto-root on boot. Safety rules learned in the field:
  *  - A failed run disables the receiver; the user re-enables it in the app.
@@ -23,6 +25,7 @@ import android.util.Log;
  */
 public class BootReceiver extends BroadcastReceiver implements IReporter {
     private static final String TAG = "dfroot";
+    private static final AtomicBoolean RUNNING = new AtomicBoolean(false);
 
     @Override
     public void report(String msg) {
@@ -60,29 +63,36 @@ public class BootReceiver extends BroadcastReceiver implements IReporter {
         deCtx.getSharedPreferences("dfroot", Context.MODE_PRIVATE)
                 .edit().putBoolean("soft_reboot", autoSoftReboot).apply();
 
+        if (!RUNNING.compareAndSet(false, true)) {
+            Log.i(TAG, "boot: autorun already in progress, skipping duplicate broadcast");
+            return;
+        }
+        final PendingResult pending = goAsync();
         PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "dfroot:boot");
-        wl.acquire();
+        wl.acquire(90_000L);
         new Thread(() -> {
             boolean ok = false;
             try {
                 int rc = ExploitRunner.run(deCtx, this);
                 Log.i(TAG, "boot: exploit rc=" + rc);
                 ok = rc == 0;
+                // The download-mode byte is per boot, and the only thing that can write it is the su
+                // this run just put back, so re-arming belongs here and nowhere earlier.
+                if (ok) armD2Vault(deCtx);
+                if (!ok) {
+                    Log.i(TAG, "boot: failed - disabling autorun interlock");
+                    context.getPackageManager().setComponentEnabledSetting(
+                            new ComponentName(context, BootReceiver.class),
+                            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                            PackageManager.DONT_KILL_APP);
+                }
             } catch (Exception e) {
                 Log.e(TAG, "boot: exploit exception", e);
             } finally {
-                wl.release();
-            }
-            // The download-mode byte is per boot, and the only thing that can write it is the su
-            // this run just put back, so re-arming belongs here and nowhere earlier.
-            if (ok) armD2Vault(deCtx);
-            if (!ok) {
-                Log.i(TAG, "boot: failed - disabling autorun interlock");
-                context.getPackageManager().setComponentEnabledSetting(
-                        new ComponentName(context, BootReceiver.class),
-                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                        PackageManager.DONT_KILL_APP);
+                RUNNING.set(false);
+                if (wl.isHeld()) wl.release();
+                pending.finish();
             }
         }, "dfroot-boot").start();
     }
