@@ -42,7 +42,11 @@ android {
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("keystore")
+            signingConfig = if (file("keystore.jks").exists()) {
+                signingConfigs.getByName("keystore")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
         release {
             signingConfig = signingConfigs.getByName("keystore")
