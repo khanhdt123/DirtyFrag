@@ -639,7 +639,7 @@ public class MainActivity extends Activity implements IReporter {
             // relabels the pill "Run exploit", while the boot block above settled it on "Reboot".
             binding.twoStep.setSeg1(1f, "100%");
             binding.twoStep.setSeg2(1f, "No su", 0xFFE57373);
-        } else if (rootedNow || lastSuccess) {
+        } else if (rootedNow) {
             binding.twoStep.setSeg1(1f, "100%");
             binding.twoStep.setSeg2(1f, "Verified", 0xFFFFFFFF);
         } else if (lastFailed) {
@@ -1206,6 +1206,13 @@ public class MainActivity extends Activity implements IReporter {
                     mSuWasPresent = up;
                     // A root that went away is a root that has not been promised anything yet.
                     if (!up) mAutorunTried = false;
+                    Log.i(TAG, "rootwatch: su_present=" + up + " state=" + RootState.state());
+                    if (up && RootState.state() == RootState.State.ROOTED) {
+                        failedRun = false;
+                        binding.twoStep.setSeg1(1f, "100%");
+                        binding.twoStep.setSeg2(1f, "Verified", 0xFFFFFFFF);
+                    }
+                    updateRunButton();
                     mExec.execute(MainActivity.this::refreshRecovery);
                 }
                 mMain.postDelayed(this, ROOT_WATCH_MS);
