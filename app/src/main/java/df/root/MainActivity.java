@@ -135,25 +135,10 @@ public class MainActivity extends Activity implements IReporter {
                 driveProgress(line.trim());
             }
             for (String line : msg.split("\n", -1)) {
-                String t = line.trim();
-                // Skip empty lines to keep the log compact.
-                if (t.isEmpty()) {
+                String t = ExploitRunner.formatLogLine(line);
+                if (t == null) {
                     continue;
                 }
-                // Drop byte-progress counters ("0 ?", "512 ?", ...).
-                if (t.matches("\\d+\\s*(\\u2026|\\.{3})?")) {
-                    continue;
-                }
-                // Drop internal patch/hook details and raw result markers: the
-                // app renders its own SETUP/EXPLOIT/INIT/CLEANUP headers and
-                // synthesizes a single failure line instead of the raw one.
-                if (t.contains("hook=") || t.equals("ksud start: SUCCESS")
-                        || t.contains("ERROR - ")) {
-                    continue;
-                }
-                // Strip hex file offsets: ".../libc.so+0x6e8b0" -> ".../libc.so"
-                t = t.replaceAll("\\+0x[0-9a-fA-F]+$", "");
-                t = stripHeader(t);
                 appendLog(t);
             }
             binding.outputScroll.post(() -> binding.outputScroll.fullScroll(View.FOCUS_DOWN));
@@ -368,14 +353,7 @@ public class MainActivity extends Activity implements IReporter {
     /** "=== setup ===" -> "SETUP"; "=== exploit (patching files) ===" ->
      *  "PATCHING"; "=== exploit failed: x ===" -> "EXPLOIT FAILED: X". */
     private static String stripHeader(String t) {
-        java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("^===\\s*(.*?)\\s*===$").matcher(t);
-        if (!m.matches()) return t;
-        String h = m.group(1).toUpperCase();
-        // The native binary still prints "=== exploit (patching files) ===";
-        // the UI shows the short form.
-        if (h.equals("EXPLOIT (PATCHING FILES)")) return "PATCHING";
-        return h;
+        return ExploitRunner.stripHeader(t);
     }
 
     /** The log's first line. Deliberately generic: the device banner that
@@ -418,12 +396,7 @@ public class MainActivity extends Activity implements IReporter {
     }
 
     private int bootCount() {
-        try {
-            return android.provider.Settings.Global.getInt(getContentResolver(),
-                    android.provider.Settings.Global.BOOT_COUNT, -1);
-        } catch (Exception e) {
-            return -1;
-        }
+        return ExploitRunner.bootCount(this);
     }
 
     private String readLastLog() {
@@ -629,8 +602,10 @@ public class MainActivity extends Activity implements IReporter {
                 && createDeviceProtectedStorageContext()
                         .getSharedPreferences("dfroot", MODE_PRIVATE)
                         .getBoolean("last_run_success", false);
+        String lastLower = last.toLowerCase(java.util.Locale.ROOT);
         boolean lastFailed = hasLastLog
-                && last.toLowerCase().contains("=== exploit failed");
+                && (lastLower.contains("=== exploit failed")
+                        || lastLower.contains("exploit failed:"));
         if (hookedNoRoot) {
             // Nothing at all used to be drawn on this path: a boot that was hooked without root
             // showed an empty bar, which reads as "nothing happened" when the truth is that the
@@ -825,6 +800,9 @@ public class MainActivity extends Activity implements IReporter {
                 checked ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
                         : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP);
+            createDeviceProtectedStorageContext()
+                .getSharedPreferences("dfroot", MODE_PRIVATE)
+                .edit().putInt(BootService.PREF_BOOT_FAIL_COUNT, 0).apply();
             binding.switchAutoSoftReboot.setEnabled(checked);
         });
 
@@ -2526,8 +2504,10 @@ public class MainActivity extends Activity implements IReporter {
                         : "failed to patch files";
                 report("\n=== exploit failed: " + why + " ===\n");
             }
-            mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
-                    .edit().putBoolean("last_run_success", rc == 0).apply();
+            SharedPreferences.Editor ed = mDeCtx.getSharedPreferences("dfroot", MODE_PRIVATE).edit();
+            ed.putBoolean("last_run_success", rc == 0);
+            if (rc == 0) ed.putInt(BootService.PREF_BOOT_FAIL_COUNT, 0);
+            ed.apply();
         } catch (Exception e) {
             Log.e(TAG, "exploit exception", e);
             report("\nexception: " + e + "\n");

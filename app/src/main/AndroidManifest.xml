@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Package visibility (Android 11+): the SU-manager picker enumerates every
          installed app and keeps only the ones that actually ship libksud.so, so a
          fixed <queries> allow-list is no longer enough. The app is sideloaded, so
@@ -30,13 +33,20 @@
 
         <receiver
             android:name=".BootReceiver"
-            android:directBootAware="true"
             android:enabled="false"
             android:exported="false">
             <intent-filter>
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <service
+            android:name=".BootService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Runs post-boot root initialization cleanly outside BroadcastQueue limits" />
+        </service>
     </application>
 </manifest>
